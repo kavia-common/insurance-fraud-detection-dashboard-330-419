@@ -38,6 +38,18 @@ app.use('/docs', swaggerUi.serve, (req, res, next) => {
   swaggerUi.setup(dynamicSpec)(req, res, next);
 });
 
+/**
+ * PUBLIC_INTERFACE
+ * GET /openapi.json
+ * Returns the OpenAPI 3.0 spec JSON used by Swagger UI.
+ *
+ * This endpoint is useful for quick smoke checks to confirm routes are registered
+ * (e.g., POST /api/claims/upload) without depending on the Swagger UI HTML.
+ */
+app.get('/openapi.json', (req, res) => {
+  res.status(200).json(swaggerSpec);
+});
+
 // Parse JSON request body
 app.use(express.json());
 
