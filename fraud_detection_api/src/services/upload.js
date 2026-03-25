@@ -178,66 +178,102 @@ async function ingestCsvBuffer(buffer) {
     return { inserted: 0, updated: 0, signalsInserted: 0, message: 'No rows found in CSV.' };
   }
 
+  // Pre-fetch existing claim_numbers so we can provide accurate inserted/updated counts
+  // without doing a per-row select.
+  const claimNumbers = rows
+    .map(r => (r?.claim_number || r?.claimNumber || r?.['Claim #'] || r?.claim_no || ''))
+    .map(v => String(v).trim())
+    .filter(Boolean);
+
+  const existingSet = new Set();
+  if (claimNumbers.length) {
+    const { data: existingRows, error: existingErr } = await supabase
+      .from('claims')
+      .select('claim_number')
+      .in('claim_number', claimNumbers);
+
+    if (existingErr) throw new Error(existingErr.message);
+    for (const r of existingRows || []) {
+      if (r?.claim_number) existingSet.add(r.claim_number);
+    }
+  }
+
   let inserted = 0;
   let updated = 0;
   let signalsInserted = 0;
 
   for (let i = 0; i < rows.length; i += 1) {
     const raw = rows[i];
-    const normalized = normalizeRow(raw);
 
-    // Upsert claims by claim_number (unique).
-    const riskBand = normalized.risk_level;
-    const claimPayload = {
-      claim_number: normalized.claim_number,
-      policy_number: normalized.policy_number,
-      claimant_name: normalized.claimant_name,
-      claimant_email: normalized.claimant_email,
-      // Support both schemas.
-      claim_date: normalized.incident_date,
-      incident_date: normalized.incident_date,
-      report_date: normalized.report_date,
-      claim_amount: normalized.claim_amount,
-      incident_type: normalized.incident_type,
-      description: normalized.description,
-      risk_band: riskBand,
-      risk_level: riskBand,
-      risk_score: normalized.risk_score,
-      // Some schemas use `pending` instead of `new`
-      status: riskBand === 'high' ? 'in_review' : 'pending',
-    };
+    try {
+      const normalized = normalizeRow(raw);
 
-    const { data: upserted, error: upsertErr } = await supabase
-      .from('claims')
-      .upsert(claimPayload, { onConflict: 'claim_number' })
-      .select('id')
-      .maybeSingle();
+      // Finalized schema prefers risk_band + claim_date.
+      const riskBand = normalized.risk_level;
 
-    if (upsertErr) throw new Error(upsertErr.message);
-    if (!upserted?.id) throw new Error('Failed to upsert claim (missing id).');
+      // NOTE: We still populate `incident_date` for backward compatibility, but `claim_date`
+      // is the preferred column per finalized schema.
+      const claimPayload = {
+        claim_number: normalized.claim_number,
+        policy_number: normalized.policy_number,
+        claimant_name: normalized.claimant_name,
+        claimant_email: normalized.claimant_email,
 
-    // Heuristic: we can’t easily distinguish insert vs update w/out extra query; keep simple:
-    updated += 1;
+        claim_date: normalized.incident_date,
+        incident_date: normalized.incident_date,
+        report_date: normalized.report_date,
 
-    const claimId = upserted.id;
+        claim_amount: normalized.claim_amount,
+        incident_type: normalized.incident_type,
+        description: normalized.description,
 
-    // Insert signals for this ingestion (do not de-dup for demo simplicity).
-    const sigs = (normalized.signals || []).map(s => ({
-      claim_id: claimId,
-      signal_type: s.signal_type,
-      severity: s.severity,
-      description: s.description,
-      rule_code: s.rule_code,
-      metadata: s.metadata || {},
-    }));
+        risk_band: riskBand,
+        risk_level: riskBand,
+        risk_score: normalized.risk_score,
 
-    if (sigs.length) {
-      const { error: sigErr } = await supabase.from('fraud_signals').insert(sigs);
-      if (sigErr) throw new Error(sigErr.message);
-      signalsInserted += sigs.length;
+        // Workflow default: keep items in queue if high risk, otherwise pending/new.
+        status: riskBand === 'high' ? 'in_review' : 'pending',
+      };
+
+      const wasExisting = existingSet.has(normalized.claim_number);
+
+      const { data: upserted, error: upsertErr } = await supabase
+        .from('claims')
+        .upsert(claimPayload, { onConflict: 'claim_number' })
+        .select('id,claim_number')
+        .maybeSingle();
+
+      if (upsertErr) throw new Error(upsertErr.message);
+      if (!upserted?.id) throw new Error('Failed to upsert claim (missing id).');
+
+      if (wasExisting) updated += 1;
+      else inserted += 1;
+
+      const claimId = upserted.id;
+
+      // Insert signals for this ingestion (do not de-dup for demo simplicity).
+      const sigs = (normalized.signals || []).map(s => ({
+        claim_id: claimId,
+        signal_type: s.signal_type,
+        severity: s.severity,
+        description: s.description,
+        rule_code: s.rule_code,
+        metadata: s.metadata || {},
+      }));
+
+      if (sigs.length) {
+        const { error: sigErr } = await supabase.from('fraud_signals').insert(sigs);
+        if (sigErr) throw new Error(sigErr.message);
+        signalsInserted += sigs.length;
+      }
+    } catch (e) {
+      // Add row context to make CSV ingestion debuggable.
+      const claimNumber =
+        raw?.claim_number || raw?.claimNumber || raw?.['Claim #'] || raw?.claim_no || 'unknown';
+      throw new Error(
+        `CSV ingestion failed at row ${i + 1} (claim_number=${claimNumber}): ${e?.message || String(e)}`
+      );
     }
-
-    inserted += 1;
   }
 
   return {

@@ -146,7 +146,7 @@ router.get('/', healthController.check.bind(healthController));
 
 /**
  * @swagger
- * /api/claims/upload:
+ * /claims/upload:
  *   post:
  *     tags: [Claims]
  *     summary: Upload claims CSV for parsing/scoring and insertion
@@ -182,7 +182,7 @@ router.post('/claims/upload', upload.single('file'), claimsController.uploadCsv.
 
 /**
  * @swagger
- * /api/claims:
+ * /claims:
  *   get:
  *     tags: [Claims]
  *     summary: List claims
@@ -227,7 +227,7 @@ router.get('/claims', claimsController.listClaims.bind(claimsController));
 
 /**
  * @swagger
- * /api/claims/{id}:
+ * /claims/{id}:
  *   get:
  *     tags: [Claims]
  *     summary: Get claim detail (including fraud signals)
@@ -262,7 +262,7 @@ router.get('/claims/:id', claimsController.getClaim.bind(claimsController));
 
 /**
  * @swagger
- * /api/claims/{id}/outcome:
+ * /claims/{id}/outcome:
  *   post:
  *     tags: [Claims]
  *     summary: Submit investigator outcome for a claim
@@ -304,7 +304,7 @@ router.post('/claims/:id/outcome', claimsController.submitOutcome.bind(claimsCon
 
 /**
  * @swagger
- * /api/queue:
+ * /queue:
  *   get:
  *     tags: [Queue]
  *     summary: Get investigator queue (prioritized)
@@ -332,7 +332,7 @@ router.get('/queue', claimsController.queue.bind(claimsController));
 
 /**
  * @swagger
- * /api/reports/summary:
+ * /reports/summary:
  *   get:
  *     tags: [Reports]
  *     summary: Get reports summary metrics
@@ -348,7 +348,7 @@ router.get('/reports/summary', claimsController.reportsSummary.bind(claimsContro
 
 /**
  * @swagger
- * /api/diag/claims-count:
+ * /diag/claims-count:
  *   get:
  *     tags: [Health]
  *     summary: Diagnostics - claims count and sample

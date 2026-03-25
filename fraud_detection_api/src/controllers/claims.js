@@ -10,7 +10,14 @@ class ClaimsController {
   async uploadCsv(req, res, next) {
     try {
       if (!req.file || !req.file.buffer) {
-        return res.status(400).json({ message: 'Missing file. Expected multipart form field "file".' });
+        return res.status(400).json({
+          message: 'Missing file. Expected multipart form field "file".',
+          diagnostics: {
+            hasFile: Boolean(req.file),
+            receivedFields: Object.keys(req.body || {}),
+            contentType: req.headers['content-type'],
+          },
+        });
       }
       const result = await uploadService.ingestCsvBuffer(req.file.buffer);
       return res.status(200).json(result);

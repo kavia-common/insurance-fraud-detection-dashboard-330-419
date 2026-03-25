@@ -64,16 +64,25 @@ function mapStatusForOutcome(dbOutcome) {
 async function listClaims({ q, riskBand, sortBy, sortDir } = {}) {
   const supabase = getSupabaseClient();
 
-  // Detect schema by probing a single row for `risk_band` existence.
+  // Detect schema by probing a single row for columns that vary by environment.
   // This prevents 500s when the column name differs between environments.
   const { data: sample, error: sampleErr } = await supabase
     .from('claims')
-    .select('risk_band')
+    .select('risk_band,claim_date')
     .limit(1);
   if (sampleErr) throw new Error(sampleErr.message);
 
-  const hasRiskBandCol = Array.isArray(sample) && sample.length > 0 && Object.prototype.hasOwnProperty.call(sample[0], 'risk_band');
+  const hasRiskBandCol =
+    Array.isArray(sample) &&
+    sample.length > 0 &&
+    Object.prototype.hasOwnProperty.call(sample[0], 'risk_band');
   const riskCol = hasRiskBandCol ? 'risk_band' : 'risk_level';
+
+  const hasClaimDateCol =
+    Array.isArray(sample) &&
+    sample.length > 0 &&
+    Object.prototype.hasOwnProperty.call(sample[0], 'claim_date');
+  const lossDateCol = hasClaimDateCol ? 'claim_date' : 'incident_date';
 
   let query = supabase.from('claims').select('*');
 
@@ -95,10 +104,15 @@ async function listClaims({ q, riskBand, sortBy, sortDir } = {}) {
   const sortMap = {
     riskScore: 'risk_score',
     amount: 'claim_amount',
-    lossDate: 'incident_date',
+    // Finalized schema: `claim_date`; older schema: `incident_date`.
+    // We'll order by claim_date first (Postgres will error if column doesn't exist),
+    // so we select a probe above and choose based on schema.
+    lossDate: 'claim_date',
   };
 
-  const col = sortMap[sortBy] || 'risk_score';
+  let col = sortMap[sortBy] || 'risk_score';
+  if (col === 'claim_date') col = lossDateCol;
+
   const ascending = String(sortDir || 'desc').toLowerCase() === 'asc';
 
   const { data, error } = await query.order(col, { ascending }).limit(500);
