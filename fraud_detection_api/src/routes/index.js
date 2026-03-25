@@ -424,4 +424,30 @@ router.get('/api/diag/claims-count', async (req, res) => {
   }
 });
 
+/**
+ * PUBLIC_INTERFACE
+ * GET /api/diag/routes
+ * Returns the list of registered routes (method + path) for this router.
+ *
+ * Use this to debug "Cannot POST /api/claims/upload" issues and confirm the
+ * runtime instance has the expected route mounts.
+ */
+router.get('/api/diag/routes', (req, res) => {
+  const routesList = (router.stack || [])
+    .filter(layer => layer && layer.route && layer.route.path)
+    .map(layer => ({
+      path: layer.route.path,
+      methods: Object.keys(layer.route.methods || {})
+        .map(m => m.toUpperCase())
+        .sort(),
+    }))
+    .sort((a, b) => (a.path > b.path ? 1 : -1));
+
+  return res.status(200).json({
+    ok: true,
+    count: routesList.length,
+    routes: routesList,
+  });
+});
+
 module.exports = router;
