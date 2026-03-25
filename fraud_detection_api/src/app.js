@@ -54,7 +54,9 @@ app.get('/openapi.json', (req, res) => {
 app.use(express.json());
 
 // Mount routes
-app.use('/', routes);
+// NOTE: All API routes are mounted under /api to avoid base-path ambiguity.
+// This ensures POST /api/claims/upload works regardless of reverse-proxy behavior.
+app.use('/api', routes);
 
 /**
  * Error handling middleware

@@ -178,7 +178,7 @@ router.get('/', healthController.check.bind(healthController));
  *                 message:
  *                   type: string
  */
-router.post('/api/claims/upload', upload.single('file'), claimsController.uploadCsv.bind(claimsController));
+router.post('/claims/upload', upload.single('file'), claimsController.uploadCsv.bind(claimsController));
 
 /**
  * @swagger
@@ -223,7 +223,7 @@ router.post('/api/claims/upload', upload.single('file'), claimsController.upload
  *                   items:
  *                     $ref: '#/components/schemas/Claim'
  */
-router.get('/api/claims', claimsController.listClaims.bind(claimsController));
+router.get('/claims', claimsController.listClaims.bind(claimsController));
 
 /**
  * @swagger
@@ -258,7 +258,7 @@ router.get('/api/claims', claimsController.listClaims.bind(claimsController));
  *       404:
  *         description: Claim not found
  */
-router.get('/api/claims/:id', claimsController.getClaim.bind(claimsController));
+router.get('/claims/:id', claimsController.getClaim.bind(claimsController));
 
 /**
  * @swagger
@@ -300,7 +300,7 @@ router.get('/api/claims/:id', claimsController.getClaim.bind(claimsController));
  *       404:
  *         description: Claim not found
  */
-router.post('/api/claims/:id/outcome', claimsController.submitOutcome.bind(claimsController));
+router.post('/claims/:id/outcome', claimsController.submitOutcome.bind(claimsController));
 
 /**
  * @swagger
@@ -328,7 +328,7 @@ router.post('/api/claims/:id/outcome', claimsController.submitOutcome.bind(claim
  *                           reason:
  *                             type: string
  */
-router.get('/api/queue', claimsController.queue.bind(claimsController));
+router.get('/queue', claimsController.queue.bind(claimsController));
 
 /**
  * @swagger
@@ -344,7 +344,7 @@ router.get('/api/queue', claimsController.queue.bind(claimsController));
  *             schema:
  *               $ref: '#/components/schemas/ReportsSummary'
  */
-router.get('/api/reports/summary', claimsController.reportsSummary.bind(claimsController));
+router.get('/reports/summary', claimsController.reportsSummary.bind(claimsController));
 
 /**
  * @swagger
@@ -379,7 +379,7 @@ router.get('/api/reports/summary', claimsController.reportsSummary.bind(claimsCo
  *       500:
  *         description: Diagnostic failure (Supabase connectivity / permissions / configuration).
  */
-router.get('/api/diag/claims-count', async (req, res) => {
+router.get('/diag/claims-count', async (req, res) => {
   // Lazy require to avoid any startup-time coupling; errors are returned in payload.
   // This endpoint is for debug/smoke testing, not for production analytics.
   // eslint-disable-next-line global-require
@@ -432,7 +432,7 @@ router.get('/api/diag/claims-count', async (req, res) => {
  * Use this to debug "Cannot POST /api/claims/upload" issues and confirm the
  * runtime instance has the expected route mounts.
  */
-router.get('/api/diag/routes', (req, res) => {
+router.get('/diag/routes', (req, res) => {
   const routesList = (router.stack || [])
     .filter(layer => layer && layer.route && layer.route.path)
     .map(layer => ({
