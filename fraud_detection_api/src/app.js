@@ -56,13 +56,33 @@ app.use(express.json());
 // Mount routes
 app.use('/', routes);
 
-// Error handling middleware
+/**
+ * Error handling middleware
+ *
+ * In non-production environments, include a safe subset of error details to
+ * speed up debugging (e.g., Supabase schema/config issues during CSV upload).
+ * In production, keep responses generic to avoid leaking internals.
+ */
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
+  console.error(err);
+
+  const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+  const status = err?.statusCode || err?.status || 500;
+
+  const payload = {
     status: 'error',
-    message: 'Internal Server Error',
-  });
+    message: isProd ? 'Internal Server Error' : (err?.message || 'Internal Server Error'),
+  };
+
+  if (!isProd) {
+    payload.details = {
+      name: err?.name,
+      // stack is very helpful locally; omit in prod
+      stack: err?.stack,
+    };
+  }
+
+  res.status(status).json(payload);
 });
 
 module.exports = app;
