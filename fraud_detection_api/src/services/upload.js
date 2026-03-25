@@ -112,7 +112,14 @@ function normalizeRow(row) {
   const claimant_name = row.claimant_name || row.claimantName || row['Claimant Name'] || row.name;
   const claimant_email = row.claimant_email || row.claimantEmail || row.email;
 
-  const incident_date = row.incident_date || row.incidentDate || row.loss_date || row.lossDate || row['Loss Date'];
+  const incident_date =
+    row.claim_date ||
+    row.claimDate ||
+    row.incident_date ||
+    row.incidentDate ||
+    row.loss_date ||
+    row.lossDate ||
+    row['Loss Date'];
   const report_date = row.report_date || row.reportDate || row['Report Date'];
 
   const claim_amount = row.claim_amount || row.claimAmount || row.amount || row['Claim Amount'];
@@ -180,19 +187,24 @@ async function ingestCsvBuffer(buffer) {
     const normalized = normalizeRow(raw);
 
     // Upsert claims by claim_number (unique).
+    const riskBand = normalized.risk_level;
     const claimPayload = {
       claim_number: normalized.claim_number,
       policy_number: normalized.policy_number,
       claimant_name: normalized.claimant_name,
       claimant_email: normalized.claimant_email,
+      // Support both schemas.
+      claim_date: normalized.incident_date,
       incident_date: normalized.incident_date,
       report_date: normalized.report_date,
       claim_amount: normalized.claim_amount,
       incident_type: normalized.incident_type,
       description: normalized.description,
-      risk_level: normalized.risk_level,
+      risk_band: riskBand,
+      risk_level: riskBand,
       risk_score: normalized.risk_score,
-      status: normalized.risk_level === 'high' ? 'in_review' : 'new',
+      // Some schemas use `pending` instead of `new`
+      status: riskBand === 'high' ? 'in_review' : 'pending',
     };
 
     const { data: upserted, error: upsertErr } = await supabase

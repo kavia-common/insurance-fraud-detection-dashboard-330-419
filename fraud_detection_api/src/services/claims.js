@@ -1,7 +1,23 @@
 const { getSupabaseClient } = require('./supabaseClient');
 
+function getRiskBand(row) {
+  // Support both schemas:
+  // - newer seed/schema uses `risk_band`
+  // - earlier iteration used `risk_level`
+  return row?.risk_band ?? row?.risk_level ?? null;
+}
+
+function getLossDate(row) {
+  // Support both schemas:
+  // - newer seed/schema uses `claim_date`
+  // - earlier iteration used `incident_date`
+  return row?.claim_date ?? row?.incident_date ?? null;
+}
+
 function toClaimDto(row) {
   if (!row) return row;
+  const riskBand = getRiskBand(row);
+
   // Keep DB fields but also provide common camelCase aliases used by the UI.
   return {
     ...row,
@@ -9,9 +25,11 @@ function toClaimDto(row) {
     policyNumber: row.policy_number,
     claimantName: row.claimant_name,
     claimAmount: row.claim_amount,
-    lossDate: row.incident_date, // UI uses lossDate/loss_date as an alias
+    lossDate: getLossDate(row), // UI uses lossDate/loss_date as an alias
     riskScore: row.risk_score,
-    riskLevel: row.risk_level,
+    // Expose both names for compatibility with older UI/service code.
+    riskBand,
+    riskLevel: riskBand,
   };
 }
 
@@ -46,9 +64,20 @@ function mapStatusForOutcome(dbOutcome) {
 async function listClaims({ q, riskBand, sortBy, sortDir } = {}) {
   const supabase = getSupabaseClient();
 
+  // Detect schema by probing a single row for `risk_band` existence.
+  // This prevents 500s when the column name differs between environments.
+  const { data: sample, error: sampleErr } = await supabase
+    .from('claims')
+    .select('risk_band')
+    .limit(1);
+  if (sampleErr) throw new Error(sampleErr.message);
+
+  const hasRiskBandCol = Array.isArray(sample) && sample.length > 0 && Object.prototype.hasOwnProperty.call(sample[0], 'risk_band');
+  const riskCol = hasRiskBandCol ? 'risk_band' : 'risk_level';
+
   let query = supabase.from('claims').select('*');
 
-  if (riskBand) query = query.eq('risk_level', riskBand);
+  if (riskBand) query = query.eq(riskCol, riskBand);
 
   if (q) {
     // Basic text search across common columns (PostgREST OR syntax).
@@ -117,10 +146,11 @@ async function getClaimById(id) {
 async function getQueue() {
   const supabase = getSupabaseClient();
 
+  // Some schemas use status values like `pending` instead of `new`.
   const { data, error } = await supabase
     .from('claims')
     .select('*')
-    .in('status', ['new', 'in_review'])
+    .in('status', ['new', 'pending', 'in_review'])
     .order('risk_score', { ascending: false })
     .limit(50);
 
@@ -129,7 +159,7 @@ async function getQueue() {
   return (data || []).map((r, idx) => ({
     ...toClaimDto(r),
     priority: idx + 1,
-    reason: r.risk_level === 'high' ? 'High risk score' : 'Needs review',
+    reason: (r.risk_band ?? r.risk_level) === 'high' ? 'High risk score' : 'Needs review',
   }));
 }
 
@@ -144,13 +174,21 @@ async function submitOutcome(id, { outcome, notes } = {}) {
   const dbOutcome = mapOutcomeToDb(outcome);
   const status = mapStatusForOutcome(dbOutcome);
 
+  // Support both schemas:
+  // - newer schema supports investigator_notes + outcome_at
+  // - earlier schema used description and updated_at
   const patch = {
     outcome: dbOutcome,
     status,
-    // For demo/audit: append notes into description if provided (keeps schema minimal).
     ...(notes
       ? {
-          description: `INVESTIGATOR_NOTES: ${notes}\n\n${''}`,
+          investigator_notes: notes,
+          description: `INVESTIGATOR_NOTES: ${notes}`,
+        }
+      : {}),
+    ...(dbOutcome
+      ? {
+          outcome_at: new Date().toISOString(),
         }
       : {}),
   };
@@ -182,20 +220,40 @@ async function getReportsSummary() {
     .select('*', { count: 'exact', head: true });
   if (totalErr) throw new Error(totalErr.message);
 
+  // Detect schema columns by selecting a single row.
+  const { data: schemaProbe, error: probeErr } = await supabase
+    .from('claims')
+    .select('risk_band,outcome_at')
+    .limit(1);
+  if (probeErr) throw new Error(probeErr.message);
+
+  const hasRiskBandCol =
+    Array.isArray(schemaProbe) &&
+    schemaProbe.length > 0 &&
+    Object.prototype.hasOwnProperty.call(schemaProbe[0], 'risk_band');
+  const riskCol = hasRiskBandCol ? 'risk_band' : 'risk_level';
+
+  const hasOutcomeAtCol =
+    Array.isArray(schemaProbe) &&
+    schemaProbe.length > 0 &&
+    Object.prototype.hasOwnProperty.call(schemaProbe[0], 'outcome_at');
+  const reviewedAtCol = hasOutcomeAtCol ? 'outcome_at' : 'updated_at';
+
   const { count: highRisk, error: highErr } = await supabase
     .from('claims')
     .select('*', { count: 'exact', head: true })
-    .eq('risk_level', 'high');
+    .eq(riskCol, 'high');
   if (highErr) throw new Error(highErr.message);
 
   const { count: inQueue, error: qErr } = await supabase
     .from('claims')
     .select('*', { count: 'exact', head: true })
-    .in('status', ['new', 'in_review']);
+    .in('status', ['new', 'pending', 'in_review']);
   if (qErr) throw new Error(qErr.message);
 
-  // Breakdown: fetch all claims risk levels (lightweight for demo-sized data).
-  const { data: all, error: allErr } = await supabase.from('claims').select('risk_level,outcome,status,updated_at');
+  // Breakdown: fetch lightweight columns only.
+  const selectCols = `${riskCol},outcome,status,${reviewedAtCol}`;
+  const { data: all, error: allErr } = await supabase.from('claims').select(selectCols);
   if (allErr) throw new Error(allErr.message);
 
   const riskBreakdown = { high: 0, medium: 0, low: 0 };
@@ -210,16 +268,17 @@ async function getReportsSummary() {
   let reviewedToday = 0;
 
   for (const r of all || []) {
-    if (r.risk_level && riskBreakdown[r.risk_level] != null) riskBreakdown[r.risk_level] += 1;
+    const band = r[riskCol];
+    if (band && riskBreakdown[band] != null) riskBreakdown[band] += 1;
 
     if (r.outcome === 'fraud') outcomes.fraud += 1;
     else if (r.outcome === 'not_fraud') outcomes.not_fraud += 1;
     else outcomes.unreviewed += 1;
 
-    // Treat approved/denied as reviewed.
+    // Treat approved/denied as reviewed; additionally, if there is a reviewedAt column use it.
     if (['approved', 'denied'].includes(r.status)) {
-      const updatedAt = r.updated_at ? String(r.updated_at) : '';
-      if (updatedAt.startsWith(todayPrefix)) reviewedToday += 1;
+      const reviewedAt = r[reviewedAtCol] ? String(r[reviewedAtCol]) : '';
+      if (reviewedAt.startsWith(todayPrefix)) reviewedToday += 1;
     }
   }
 
