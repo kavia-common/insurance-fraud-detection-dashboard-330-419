@@ -346,4 +346,82 @@ router.get('/api/queue', claimsController.queue.bind(claimsController));
  */
 router.get('/api/reports/summary', claimsController.reportsSummary.bind(claimsController));
 
+/**
+ * @swagger
+ * /api/diag/claims-count:
+ *   get:
+ *     tags: [Health]
+ *     summary: Diagnostics - claims count and sample
+ *     description: |
+ *       Returns a count of rows in the `claims` table plus up to 3 sample rows.
+ *       This is intended as a minimal smoke test to validate:
+ *       - backend is reachable
+ *       - Supabase env vars are configured
+ *       - RLS policies allow reading seeded claims
+ *     responses:
+ *       200:
+ *         description: Diagnostics payload with count + sample.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok:
+ *                   type: boolean
+ *                   example: true
+ *                 count:
+ *                   type: integer
+ *                   example: 10
+ *                 sample:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       500:
+ *         description: Diagnostic failure (Supabase connectivity / permissions / configuration).
+ */
+router.get('/api/diag/claims-count', async (req, res) => {
+  // Lazy require to avoid any startup-time coupling; errors are returned in payload.
+  // This endpoint is for debug/smoke testing, not for production analytics.
+  // eslint-disable-next-line global-require
+  const { getSupabaseClient } = require('../services/supabaseClient');
+
+  try {
+    const supabase = getSupabaseClient();
+
+    const { count, error: countErr } = await supabase
+      .from('claims')
+      .select('*', { count: 'exact', head: true });
+
+    if (countErr) {
+      return res.status(500).json({
+        ok: false,
+        message: 'Failed to count claims',
+        error: countErr.message,
+      });
+    }
+
+    const { data: sample, error: sampleErr } = await supabase
+      .from('claims')
+      .select('id,claim_number,policy_number,claimant_name,risk_score')
+      .limit(3);
+
+    if (sampleErr) {
+      return res.status(500).json({
+        ok: false,
+        message: 'Count succeeded but sample query failed (possible RLS/column mismatch)',
+        error: sampleErr.message,
+        count: count ?? 0,
+      });
+    }
+
+    return res.status(200).json({ ok: true, count: count ?? 0, sample: sample || [] });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      message: 'Diagnostics endpoint failed (Supabase env vars missing or network/auth error)',
+      error: e?.message || String(e),
+    });
+  }
+});
+
 module.exports = router;
